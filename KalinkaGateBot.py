@@ -1,12 +1,13 @@
+import sqlite3
 import telebot
-import requests
 from telebot import types
+import requests
+from datetime import datetime, timedelta
 
 class CallToolsException(Exception):
     pass
 
 def create_call(campaign_id, phonenumber, text=None, speaker='Tatyana'):
-
   resp = requests.get(
       'https://zvonok.com/manager/cabapi_external/api/v1/phones/call/', {
           'public_key': '504ae08958e866bf0c9dbaff49c5f5ed',
@@ -19,32 +20,76 @@ def create_call(campaign_id, phonenumber, text=None, speaker='Tatyana'):
   ret = resp.json()
   return ret
 
+conn = sqlite3.connect('kalinka_data_base.db', check_same_thread=False)
+cursor = conn.cursor()
+
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS user_states (
+        user_id INTEGER PRIMARY KEY,
+        granted INTEGER
+    )
+''')
+conn.commit()
+
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS access_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES user_states(user_id)
+    )
+''')
+conn.commit()
+
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS admin_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        message_id INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES user_states(user_id)
+    )
+''')
+conn.commit()
+
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+''')
+conn.commit()
+
 TOKEN = '6957262747:AAFrIb_Z14WBwVNVC7Ed4Azf2ZGHScz3TPs'
 ADMIN_USER_ID = '961214635'
 
-# Инициализация бота
 bot = telebot.TeleBot(TOKEN)
 
-# Словарь для хранения состояний пользователя (в данном примере - флаг разрешения открытия ворот)
-user_states = {}
-# Словарь для хранения текущего сообщения администратора
-admin_messages = {}
-# Словарь для хранения запросов на доступ
-access_requests = {}
-# Словарь для отслеживания отправленных запросов на доступ пользователями
-user_requests = {}
-
+# Инициализация базы данных, включая пользователя с ID ADMIN_USER_ID
+cursor.execute('INSERT OR IGNORE INTO user_states (user_id, granted) VALUES (?, ?)', (int(ADMIN_USER_ID), 1))
+conn.commit()
 
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.chat.id
-    user_states.setdefault(user_id, {'granted': False})
+
+    cursor.execute('SELECT granted FROM user_states WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+
+    if result is None:
+        cursor.execute('INSERT INTO user_states (user_id, granted) VALUES (?, 0)', (user_id,))
+        conn.commit()
+
+        granted_status = 0
+    else:
+        granted_status = int(result[0])
 
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     button_open_gate = types.KeyboardButton("Открыть ворота")
     button_request_access = types.KeyboardButton("Запросить доступ")
 
-    # Проверяем, не является ли пользователь админом
     if user_id != int(ADMIN_USER_ID):
         markup.add(button_request_access)
 
@@ -53,109 +98,144 @@ def start(message):
     bot.send_message(user_id, "Привет! Выберите действие:", reply_markup=markup)
 
     if user_id == int(ADMIN_USER_ID):
-        user_states[user_id]['granted'] = True
         admin_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         admin_markup.add(types.KeyboardButton("Открыть ворота"))
         admin_markup.add(types.KeyboardButton("Пользователи с доступом"))
         admin_markup.add(types.KeyboardButton("Удалить доступ"))
+        admin_markup.add(types.KeyboardButton("Показать лог"))
         bot.send_message(user_id, "Добро пожаловать, администратор!", reply_markup=admin_markup)
+        
+def insert_log_entry(user_id):
+    user_info = bot.get_chat(user_id)
+    cursor.execute('INSERT INTO log (user_id, username) VALUES (?, ?)', (user_id, user_info.username))
+    conn.commit()
 
-
+def clean_old_logs():
+    week_ago = datetime.now() - timedelta(days=7)
+    cursor.execute('DELETE FROM log WHERE timestamp < ?', (week_ago.strftime('%Y-%m-%d %H:%M:%S'),))
+    conn.commit()
+            
 @bot.message_handler(func=lambda message: message.text == 'Открыть ворота')
 def open_gate(message):
     user_id = message.chat.id
 
-    if user_states.get(user_id, {}).get('granted', False):
+    cursor.execute('SELECT granted FROM user_states WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+
+    if result and result[0]:
         callback = create_call(17722404, +79218738724)
         if 'status' in callback:
             bot.send_message(user_id, "Возникла ошибка, свяжитесь с нами.")
         else:
             bot.send_message(user_id, "Ворота открыты!")
+
+            # Вставляем запись в лог
+            insert_log_entry(user_id)
+            
+            # Очищаем старые записи в логе
+            clean_old_logs()
     else:
         bot.send_message(user_id, "У вас нет доступа!")
-
 
 @bot.message_handler(func=lambda message: message.text == 'Запросить доступ' and message.chat.id != int(ADMIN_USER_ID))
 def request_access(message):
     user_id = message.chat.id
+    user_invite_text = f"[Перейти в чат](tg://user?id={user_id})"
     user_name = message.from_user.username
 
-    # Проверяем, есть ли у пользователя уже доступ
-    if user_states.get(user_id, {}).get('granted', False):
+    cursor.execute('SELECT granted FROM user_states WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+
+    if result and result[0]:
         bot.send_message(user_id, "У вас уже есть доступ.")
     else:
-        # Проверяем, отправлял ли пользователь уже запрос на доступ
-        if user_requests.get(user_id, False):
+        cursor.execute('SELECT * FROM user_states WHERE user_id = ?', (user_id,))
+        existing_user = cursor.fetchone()
+
+        if not existing_user:
+            cursor.execute('INSERT INTO user_states (user_id, granted) VALUES (?, 0)', (user_id,))
+            conn.commit()
+
+        cursor.execute('SELECT user_id FROM access_requests WHERE user_id = ?', (user_id,))
+        request_id = cursor.fetchone()
+
+        if request_id:
             bot.send_message(user_id, "Вы уже отправили запрос на доступ. Ожидайте ответа.")
         else:
-            user_requests[user_id] = True
-            access_requests[user_id] = user_name
+            # Вставляем запрос на доступ в новую таблицу
+            cursor.execute('INSERT INTO access_requests (user_id) VALUES (?)', (user_id,))
+            conn.commit()
             markup = types.InlineKeyboardMarkup()
             button_grant_access = types.InlineKeyboardButton("Дать доступ", callback_data=f'grant_{user_id}')
             button_decline_access = types.InlineKeyboardButton("Отклонить", callback_data=f'decline_{user_id}')
             markup.row(button_grant_access, button_decline_access)
-
-            # Отправим новое сообщение
             msg = bot.send_message(int(ADMIN_USER_ID),
-                                   f"Получен запрос на доступ от пользователя @{user_name} ({user_id}).",
-                                   reply_markup=markup)
-            # Сохраняем ID нового сообщения для дальнейшего удаления
-            admin_messages[user_id] = msg.message_id
-
+                                   f"Получен запрос на доступ от пользователя @{user_name} ({user_id}) {user_invite_text}",
+                                   reply_markup=markup, parse_mode="Markdown")
+            # Записываем информацию о сообщении администратора в таблицу admin_messages
+            cursor.execute('INSERT INTO admin_messages (user_id, message_id) VALUES (?, ?)', (user_id, msg.message_id))
+            conn.commit()
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(('grant_', 'decline_')))
 def process_access_decision(call):
-    user_id = call.message.text
-    user_id = user_id[user_id.find('(') + 1:user_id.find(')')]
+    user_id = int(call.data.split('_')[1])
     admin_user_id = call.from_user.id
     decision = call.data.split('_')[0]
-
-    user_id = int(user_id)
     if decision == 'grant':
-        user_states.setdefault(user_id, {'granted': False})
-        user_states[user_id]['granted'] = True
-        bot.edit_message_text("Доступ успешно выдан!", ADMIN_USER_ID, admin_messages[user_id])
+        cursor.execute('UPDATE user_states SET granted = ? WHERE user_id = ?', (1, user_id))
+        conn.commit()
+        cursor.execute('SELECT message_id FROM admin_messages WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        bot.edit_message_text("Доступ успешно выдан!", ADMIN_USER_ID, result[0])
         bot.send_message(user_id, "Доступ успешно выдан!")
     elif decision == 'decline':
-        bot.edit_message_text("Запрос в доступе отклонен.", ADMIN_USER_ID, admin_messages[user_id])
+        cursor.execute('SELECT message_id FROM admin_messages WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        bot.edit_message_text("Запрос в доступе отклонен.", ADMIN_USER_ID, result[0])
         bot.send_message(user_id, "Запрос в доступе отклонен.")
 
-    if user_id in access_requests:
-        del access_requests[user_id]
-    if user_id in user_requests:
-        del user_requests[user_id]
+    # Удаляем запрос из таблицы access_requests
+    cursor.execute('DELETE FROM access_requests WHERE user_id = ?', (user_id,))
+    conn.commit()
 
+    # Удаляем сообщение из таблицы admin_messages
+    cursor.execute('DELETE FROM admin_messages WHERE user_id = ?', (user_id,))
+    conn.commit()
 
 @bot.message_handler(func=lambda message: message.text == 'Пользователи с доступом' and message.chat.id == int(ADMIN_USER_ID))
 def users_with_access(message):
-    user_id = message.chat.id
+    admin_user_id = int(ADMIN_USER_ID)
 
-    # Проверяем, является ли пользователь админом
-    if user_id == int(ADMIN_USER_ID):
-        users_with_access = [user_id for user_id, state in user_states.items() if state.get('granted', False)]
+    cursor.execute('SELECT user_id FROM user_states WHERE granted = 1')
+    users_with_access = [user_id[0] for user_id in cursor.fetchall()]
 
-        if users_with_access:
-            users_info = "\n".join([f"ID: {user_id}, Ник: @{bot.get_chat(user_id).username}" for user_id in users_with_access])
-            bot.send_message(ADMIN_USER_ID, f"Пользователи с доступом:\n{users_info}")
-        else:
-            bot.send_message(ADMIN_USER_ID, "Нет пользователей с доступом.")
+    if users_with_access:
+        users_info = []
+        for user_id in users_with_access:
+            user_chat = bot.get_chat(user_id)
+            user_info = f"ID: {user_id}, Ник: @{user_chat.username}"
+
+            user_invite_text = f"[Перейти в чат](tg://user?id={user_id})"
+            user_info += f", {user_invite_text}"
+
+            users_info.append(user_info)
+
+        bot.send_message(admin_user_id, f"Пользователи с доступом:\n" + "\n".join(users_info), parse_mode="Markdown")
     else:
-        bot.send_message(ADMIN_USER_ID, "У вас нет прав на просмотр пользователей с доступом.")
-
+        bot.send_message(admin_user_id, "Нет пользователей с доступом.")
 
 @bot.message_handler(func=lambda message: message.text == 'Удалить доступ' and message.chat.id == int(ADMIN_USER_ID))
 def remove_access(message):
     user_id = message.chat.id
 
-    # Проверяем, является ли пользователь админом
     if user_id == int(ADMIN_USER_ID):
-        users_with_access = [user_id for user_id, state in user_states.items() if state.get('granted', False)]
+        cursor.execute('SELECT user_id FROM user_states WHERE granted = 1')
+        users_with_access = [user[0] for user in cursor.fetchall()]
 
         if users_with_access:
             markup = types.InlineKeyboardMarkup()
 
             for user_id in users_with_access:
-                # Проверяем, что пользователь не админ
                 if user_id != int(ADMIN_USER_ID):
                     user_info = f"@{bot.get_chat(user_id).username} (ID: {user_id})"
                     button_remove_access = types.InlineKeyboardButton(f"Удалить доступ {user_info}", callback_data=f'remove_{user_id}')
@@ -167,22 +247,36 @@ def remove_access(message):
     else:
         bot.send_message(ADMIN_USER_ID, "У вас нет прав на удаление доступа.")
 
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('remove_'))
 def remove_access_callback(call):
     admin_user_id = call.from_user.id
     user_id_to_remove = int(call.data.split('_')[1])
 
-    # Проверяем, есть ли у пользователя доступ и он не админ
-    if user_states.get(user_id_to_remove, {}).get('granted', False) and user_id_to_remove != int(ADMIN_USER_ID):
-        # Удаляем доступ
-        user_states[user_id_to_remove]['granted'] = False
-        bot.edit_message_text(f"Доступ пользователя @{bot.get_chat(user_id_to_remove).username} (ID: {user_id_to_remove}) удален!",
-                              ADMIN_USER_ID, call.message.message_id)
-    elif user_id_to_remove == int(ADMIN_USER_ID):
-        bot.edit_message_text("Нельзя удалить доступ у админа.", ADMIN_USER_ID, call.message.message_id)
-    else:
-        bot.edit_message_text("У пользователя уже нет доступа.", ADMIN_USER_ID, call.message.message_id)
+    cursor.execute('UPDATE user_states SET granted = ? WHERE user_id = ?', (0, user_id_to_remove))
+    conn.commit()
 
+    bot.edit_message_text(f"Доступ пользователя @{bot.get_chat(user_id_to_remove).username} (ID: {user_id_to_remove}) удален.",
+                          ADMIN_USER_ID, call.message.message_id)
+
+@bot.message_handler(func=lambda message: message.text == 'Показать лог' and message.chat.id == int(ADMIN_USER_ID))
+def view_log(user_id):
+    # Вычисляем время 24 часа назад от текущего момента
+    day_ago = datetime.now() - timedelta(days=1)
+
+    # Извлекаем записи из лога только за последние сутки
+    cursor.execute('SELECT * FROM log WHERE timestamp >= ? ORDER BY timestamp DESC', (day_ago.strftime('%Y-%m-%d %H:%M:%S'),))
+    log_entries = cursor.fetchall()
+
+    if log_entries:
+        log_text = "Записи в логе за последние сутки:\n"
+        for entry in log_entries:
+            log_text += f"{entry[1]}, @{entry[2]}, {entry[3]}\n"
+
+        bot.send_message(ADMIN_USER_ID, log_text)
+    else:
+        bot.send_message(ADMIN_USER_ID, "Лог за последние сутки пуст.")
+        
 if __name__ == '__main__':
     bot.polling(none_stop=True)
+
+conn.close()
