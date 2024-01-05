@@ -20,7 +20,7 @@ def create_call(campaign_id, phonenumber, text=None, speaker='Tatyana'):
   ret = resp.json()
   return ret
 
-conn = sqlite3.connect('kalinka_data_base.db', check_same_thread=False)
+conn = sqlite3.connect('data/kalinka_data_base.db', check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute('''
