@@ -3,6 +3,7 @@ import telebot
 from telebot import types
 import requests
 from datetime import datetime, timedelta
+import os
 
 class CallToolsException(Exception):
     pass
@@ -20,7 +21,7 @@ def create_call(campaign_id, phonenumber, text=None, speaker='Tatyana'):
   ret = resp.json()
   return ret
 
-conn = sqlite3.connect('kalinka_data_base.db', check_same_thread=False)
+conn = sqlite3.connect('data/kalinka_data_base.db', check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute('''
@@ -204,6 +205,7 @@ def process_access_decision(call):
 
 @bot.message_handler(func=lambda message: message.text == 'Пользователи с доступом' and message.chat.id == int(ADMIN_USER_ID))
 def users_with_access(message):
+    os.listdir('data')
     admin_user_id = int(ADMIN_USER_ID)
 
     cursor.execute('SELECT user_id FROM user_states WHERE granted = 1')
