@@ -205,7 +205,6 @@ def process_access_decision(call):
 
 @bot.message_handler(func=lambda message: message.text == 'Пользователи с доступом' and message.chat.id == int(ADMIN_USER_ID))
 def users_with_access(message):
-    bot.send_message(ADMIN_USER_ID, os.listdir('data'))
     admin_user_id = int(ADMIN_USER_ID)
 
     cursor.execute('SELECT user_id FROM user_states WHERE granted = 1')
