@@ -1,9 +1,9 @@
+import mysql.connector
 import sqlite3
 import telebot
 from telebot import types
 import requests
 from datetime import datetime, timedelta
-import os
 
 class CallToolsException(Exception):
     pass
@@ -21,67 +21,78 @@ def create_call(campaign_id, phonenumber, text=None, speaker='Tatyana'):
   ret = resp.json()
   return ret
 
-conn = sqlite3.connect('kalinka_data_base.db', check_same_thread=False)
-cursor = conn.cursor()
+TOKEN = '6957262747:AAFrIb_Z14WBwVNVC7Ed4Azf2ZGHScz3TPs'
+ADMIN_USER_ID = '961214635'
+DB_HOST = 'viaduct.proxy.rlwy.net'
+DB_USER = 'root'
+DB_PASSWORD = '-4EBh3ad2B2EBCd2BD246hf62Hg-hf6h'
+DB_NAME = 'railway'
+DB_PORT = 15358
+
+connection = mysql.connector.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        port=DB_PORT
+)
+cursor = connection.cursor()
 
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS user_states (
-        user_id INTEGER PRIMARY KEY,
-        granted INTEGER
-    )
+    user_id BIGINT PRIMARY KEY,
+    granted INTEGER
+    );
 ''')
-conn.commit()
+connection.commit()
 
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS access_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES user_states(user_id)
-    )
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES user_states(user_id)
+    );
 ''')
-conn.commit()
+connection.commit()
 
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS admin_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        message_id INTEGER,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES user_states(user_id)
-    )
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    message_id BIGINT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES user_states(user_id)
+    );
 ''')
-conn.commit()
+connection.commit()
 
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    username TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 ''')
-conn.commit()
-
-TOKEN = '6957262747:AAFrIb_Z14WBwVNVC7Ed4Azf2ZGHScz3TPs'
-ADMIN_USER_ID = '961214635'
+connection.commit()
 
 bot = telebot.TeleBot(TOKEN)
 
 # Инициализация базы данных, включая пользователя с ID ADMIN_USER_ID
-cursor.execute('INSERT OR IGNORE INTO user_states (user_id, granted) VALUES (?, ?)', (int(ADMIN_USER_ID), 1))
-conn.commit()
+cursor.execute('INSERT IGNORE INTO user_states (user_id, granted) VALUES (%s, %s)', (int(ADMIN_USER_ID), 1))
+connection.commit()
 
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.chat.id
 
-    cursor.execute('SELECT granted FROM user_states WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT granted FROM user_states WHERE user_id = %s', (user_id,))
     result = cursor.fetchone()
 
     if result is None:
-        cursor.execute('INSERT INTO user_states (user_id, granted) VALUES (?, 0)', (user_id,))
-        conn.commit()
+        cursor.execute('INSERT INTO user_states (user_id, granted) VALUES (%s, 0)', (user_id,))
+        connection.commit()
 
         granted_status = 0
     else:
@@ -108,19 +119,19 @@ def start(message):
         
 def insert_log_entry(user_id):
     user_info = bot.get_chat(user_id)
-    cursor.execute('INSERT INTO log (user_id, username) VALUES (?, ?)', (user_id, user_info.username))
-    conn.commit()
+    cursor.execute('INSERT INTO log (user_id, username) VALUES (%s, %s)', (user_id, user_info.username))
+    connection.commit()
 
 def clean_old_logs():
     week_ago = datetime.now() - timedelta(days=7)
-    cursor.execute('DELETE FROM log WHERE timestamp < ?', (week_ago.strftime('%Y-%m-%d %H:%M:%S'),))
-    conn.commit()
+    cursor.execute('DELETE FROM log WHERE timestamp < %s', (week_ago.strftime('%Y-%m-%d %H:%M:%S'),))
+    connection.commit()
             
 @bot.message_handler(func=lambda message: message.text == 'Открыть ворота')
 def open_gate(message):
     user_id = message.chat.id
 
-    cursor.execute('SELECT granted FROM user_states WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT granted FROM user_states WHERE user_id = %s', (user_id,))
     result = cursor.fetchone()
 
     if result and result[0]:
@@ -144,28 +155,28 @@ def request_access(message):
     user_invite_text = f"[Перейти в чат](tg://user?id={user_id})"
     user_name = message.from_user.username
 
-    cursor.execute('SELECT granted FROM user_states WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT granted FROM user_states WHERE user_id = %s', (user_id,))
     result = cursor.fetchone()
 
     if result and result[0]:
         bot.send_message(user_id, "У вас уже есть доступ.")
     else:
-        cursor.execute('SELECT * FROM user_states WHERE user_id = ?', (user_id,))
+        cursor.execute('SELECT * FROM user_states WHERE user_id = %s', (user_id,))
         existing_user = cursor.fetchone()
 
         if not existing_user:
-            cursor.execute('INSERT INTO user_states (user_id, granted) VALUES (?, 0)', (user_id,))
-            conn.commit()
+            cursor.execute('INSERT INTO user_states (user_id, granted) VALUES (%s, 0)', (user_id,))
+            connection.commit()
 
-        cursor.execute('SELECT user_id FROM access_requests WHERE user_id = ?', (user_id,))
+        cursor.execute('SELECT user_id FROM access_requests WHERE user_id = %s', (user_id,))
         request_id = cursor.fetchone()
 
         if request_id:
             bot.send_message(user_id, "Вы уже отправили запрос на доступ. Ожидайте ответа.")
         else:
             # Вставляем запрос на доступ в новую таблицу
-            cursor.execute('INSERT INTO access_requests (user_id) VALUES (?)', (user_id,))
-            conn.commit()
+            cursor.execute('INSERT INTO access_requests (user_id) VALUES (%s)', (user_id,))
+            connection.commit()
             markup = types.InlineKeyboardMarkup()
             button_grant_access = types.InlineKeyboardButton("Дать доступ", callback_data=f'grant_{user_id}')
             button_decline_access = types.InlineKeyboardButton("Отклонить", callback_data=f'decline_{user_id}')
@@ -174,8 +185,8 @@ def request_access(message):
                                    f"Получен запрос на доступ от пользователя @{user_name} ({user_id}) {user_invite_text}",
                                    reply_markup=markup, parse_mode="Markdown")
             # Записываем информацию о сообщении администратора в таблицу admin_messages
-            cursor.execute('INSERT INTO admin_messages (user_id, message_id) VALUES (?, ?)', (user_id, msg.message_id))
-            conn.commit()
+            cursor.execute('INSERT INTO admin_messages (user_id, message_id) VALUES (%s, %s)', (user_id, msg.message_id))
+            connection.commit()
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(('grant_', 'decline_')))
 def process_access_decision(call):
@@ -183,25 +194,25 @@ def process_access_decision(call):
     admin_user_id = call.from_user.id
     decision = call.data.split('_')[0]
     if decision == 'grant':
-        cursor.execute('UPDATE user_states SET granted = ? WHERE user_id = ?', (1, user_id))
-        conn.commit()
-        cursor.execute('SELECT message_id FROM admin_messages WHERE user_id = ?', (user_id,))
+        cursor.execute('UPDATE user_states SET granted = %s WHERE user_id = %s', (1, user_id))
+        connection.commit()
+        cursor.execute('SELECT message_id FROM admin_messages WHERE user_id = %s', (user_id,))
         result = cursor.fetchone()
         bot.edit_message_text("Доступ успешно выдан!", ADMIN_USER_ID, result[0])
         bot.send_message(user_id, "Доступ успешно выдан!")
     elif decision == 'decline':
-        cursor.execute('SELECT message_id FROM admin_messages WHERE user_id = ?', (user_id,))
+        cursor.execute('SELECT message_id FROM admin_messages WHERE user_id = %s', (user_id,))
         result = cursor.fetchone()
         bot.edit_message_text("Запрос в доступе отклонен.", ADMIN_USER_ID, result[0])
         bot.send_message(user_id, "Запрос в доступе отклонен.")
 
     # Удаляем запрос из таблицы access_requests
-    cursor.execute('DELETE FROM access_requests WHERE user_id = ?', (user_id,))
-    conn.commit()
+    cursor.execute('DELETE FROM access_requests WHERE user_id = %s', (user_id,))
+    connection.commit()
 
     # Удаляем сообщение из таблицы admin_messages
-    cursor.execute('DELETE FROM admin_messages WHERE user_id = ?', (user_id,))
-    conn.commit()
+    cursor.execute('DELETE FROM admin_messages WHERE user_id = %s', (user_id,))
+    connection.commit()
 
 @bot.message_handler(func=lambda message: message.text == 'Пользователи с доступом' and message.chat.id == int(ADMIN_USER_ID))
 def users_with_access(message):
@@ -252,9 +263,9 @@ def remove_access(message):
 def remove_access_callback(call):
     admin_user_id = call.from_user.id
     user_id_to_remove = int(call.data.split('_')[1])
-
-    cursor.execute('UPDATE user_states SET granted = ? WHERE user_id = ?', (0, user_id_to_remove))
-    conn.commit()
+    
+    cursor.execute('UPDATE user_states SET granted = 0 WHERE user_id = %s', (user_id_to_remove,))
+    connection.commit()
 
     bot.edit_message_text(f"Доступ пользователя @{bot.get_chat(user_id_to_remove).username} (ID: {user_id_to_remove}) удален.",
                           ADMIN_USER_ID, call.message.message_id)
@@ -280,4 +291,4 @@ def view_log(user_id):
 if __name__ == '__main__':
     bot.polling(none_stop=True)
 
-conn.close()
+connection.close()
