@@ -275,13 +275,13 @@ def view_log(user_id):
     day_ago = datetime.now() - timedelta(days=1)
 
     # Извлекаем записи из лога только за последние сутки
-    cursor.execute('SELECT CONVERT_TZ(timestamp, "+00:00", "+03:00") AS moscow_time FROM log WHERE timestamp >= %s ORDER BY timestamp DESC', (day_ago.strftime('%Y-%m-%d %H:%M:%S'),))
+    cursor.execute('SELECT CONVERT_TZ(timestamp, "+00:00", "+03:00") AS moscow_time, id, username FROM log WHERE timestamp >= %s ORDER BY timestamp DESC', (day_ago.strftime('%Y-%m-%d %H:%M:%S'),))
     log_entries = cursor.fetchall()
 
     if log_entries:
         log_text = "Записи в логе за последние сутки:\n"
         for entry in log_entries:
-            log_text += f"{entry[1]}, @{entry[2]}, {entry[3]}\n"
+            log_text += f"ID: {entry[1]}, Ник: @{entry[2]}, Время: {entry[0]}\n"
 
         bot.send_message(ADMIN_USER_ID, log_text)
     else:
