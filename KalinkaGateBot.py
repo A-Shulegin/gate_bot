@@ -275,7 +275,7 @@ def view_log(user_id):
     day_ago = datetime.now() - timedelta(days=1)
 
     # Извлекаем записи из лога только за последние сутки
-    cursor.execute('SELECT * FROM log WHERE timestamp >= %s ORDER BY timestamp DESC', (day_ago.strftime('%Y-%m-%d %H:%M:%S'),))
+    cursor.execute('SELECT CONVERT_TZ(timestamp, "+00:00", "+03:00") AS moscow_time FROM log WHERE timestamp >= %s ORDER BY timestamp DESC', (day_ago.strftime('%Y-%m-%d %H:%M:%S'),))
     log_entries = cursor.fetchall()
 
     if log_entries:
