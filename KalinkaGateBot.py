@@ -1,5 +1,4 @@
-import mysql.connector
-import sqlite3
+import pymysql
 import telebot
 from telebot import types
 import requests
@@ -29,7 +28,7 @@ DB_PASSWORD = '-4EBh3ad2B2EBCd2BD246hf62Hg-hf6h'
 DB_NAME = 'railway'
 DB_PORT = 15358
 
-connection = mysql.connector.connect(
+connection = pymysql.connect(
         host=DB_HOST,
         user=DB_USER,
         password=DB_PASSWORD,
