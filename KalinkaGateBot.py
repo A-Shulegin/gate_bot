@@ -10,7 +10,7 @@ class CallToolsException(Exception):
 def create_call(campaign_id, phonenumber, text=None, speaker='Tatyana'):
   resp = requests.get(
       'https://zvonok.com/manager/cabapi_external/api/v1/phones/call/', {
-          'public_key': '504ae08958e866bf0c9dbaff49c5f5ed',
+          'public_key': """YOUR PUBLICK KEY""",
           'phone': phonenumber,
           'campaign_id': campaign_id,
           'text': text,
@@ -20,13 +20,13 @@ def create_call(campaign_id, phonenumber, text=None, speaker='Tatyana'):
   ret = resp.json()
   return ret
 
-TOKEN = '6957262747:AAFrIb_Z14WBwVNVC7Ed4Azf2ZGHScz3TPs'
-ADMIN_USER_ID = '961214635'
-DB_HOST = 'viaduct.proxy.rlwy.net'
-DB_USER = 'root'
-DB_PASSWORD = '-4EBh3ad2B2EBCd2BD246hf62Hg-hf6h'
-DB_NAME = 'railway'
-DB_PORT = 15358
+TOKEN = """YOUR TOKEN"""
+ADMIN_USER_ID = """YOUR USER ID"""
+DB_HOST = """YOUR HOST"""
+DB_USER = """YOUR USER"""
+DB_PASSWORD = """YOUR PASSWORD"""
+DB_NAME = """YOUR NAME"""
+DB_PORT = """YOUR PORT"""
 
 connection = pymysql.connect(
         host=DB_HOST,
